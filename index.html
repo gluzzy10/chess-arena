@@ -177,6 +177,20 @@
             background-color: #3f3f4e;
         }
 
+        .sound-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-muted);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .sound-toggle input {
+            cursor: pointer;
+        }
+
         @media (max-width: 800px) {
             .app-container {
                 flex-direction: column;
@@ -223,6 +237,11 @@
                 <button class="btn" id="resetBtn">Новая игра</button>
                 <button class="btn btn-secondary" id="undoBtn">Назад</button>
             </div>
+
+            <label class="sound-toggle">
+                <input type="checkbox" id="soundToggle" checked>
+                <span>🔊 Звуки</span>
+            </label>
         </div>
     </div>
 
@@ -231,6 +250,100 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
 
     <script>
+        // Sound manager
+        class SoundManager {
+            constructor() {
+                this.sounds = {};
+                this.enabled = true;
+                this.initSounds();
+            }
+
+            initSounds() {
+                // Move sound - simple beep
+                this.sounds.move = this.createMoveSound();
+                // Capture sound - higher pitch
+                this.sounds.capture = this.createCaptureSound();
+                // Check sound
+                this.sounds.check = this.createCheckSound();
+                // Checkmate sound
+                this.sounds.checkmate = this.createCheckmateSound();
+            }
+
+            createMoveSound() {
+                return this.synthesizeSound(400, 80, 0.1);
+            }
+
+            createCaptureSound() {
+                return this.synthesizeSound(600, 120, 0.15);
+            }
+
+            createCheckSound() {
+                return this.synthesizeSound(700, 100, 0.15);
+            }
+
+            createCheckmateSound() {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const notes = [523.25, 659.25, 783.99]; // C, E, G
+                const offlineContext = new OfflineAudioContext(1, 44100 * 0.6, 44100);
+                let time = 0;
+                
+                notes.forEach((freq, i) => {
+                    const osc = offlineContext.createOscillator();
+                    const gain = offlineContext.createGain();
+                    osc.connect(gain);
+                    gain.connect(offlineContext.destination);
+                    osc.type = 'sine';
+                    osc.frequency.value = freq;
+                    gain.gain.setValueAtTime(0.3, time);
+                    gain.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
+                    osc.start(time);
+                    osc.stop(time + 0.2);
+                    time += 0.15;
+                });
+                
+                return offlineContext.startRendering();
+            }
+
+            synthesizeSound(frequency, duration, volume) {
+                return new Promise((resolve) => {
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const offlineContext = new OfflineAudioContext(1, 44100 * (duration / 1000), 44100);
+                    
+                    const osc = offlineContext.createOscillator();
+                    const gain = offlineContext.createGain();
+                    
+                    osc.connect(gain);
+                    gain.connect(offlineContext.destination);
+                    
+                    osc.type = 'sine';
+                    osc.frequency.value = frequency;
+                    
+                    gain.gain.setValueAtTime(volume, 0);
+                    gain.gain.exponentialRampToValueAtTime(0.01, duration / 1000);
+                    
+                    osc.start(0);
+                    osc.stop(duration / 1000);
+                    
+                    offlineContext.startRendering().then(resolve);
+                });
+            }
+
+            async play(soundType) {
+                if (!this.enabled || !this.sounds[soundType]) return;
+                
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createBufferSource();
+                source.buffer = await this.sounds[soundType];
+                source.connect(audioContext.destination);
+                source.start(0);
+            }
+
+            setEnabled(enabled) {
+                this.enabled = enabled;
+            }
+        }
+
+        var soundManager = new SoundManager();
         var board = null;
         var game = new Chess();
         var statusEl = $('#status');
@@ -251,10 +364,12 @@
             let statusText = 'Ход: ' + moveColor;
             if (game.in_checkmate()) {
                 statusText = 'Мат! Победа ' + (game.turn() === 'w' ? 'Черных' : 'Белых');
+                soundManager.play('checkmate');
             } else if (game.in_draw()) {
                 statusText = 'Ничья!';
             } else if (game.in_check()) {
                 statusText += ' (Шах!)';
+                soundManager.play('check');
             }
             statusEl.text(statusText);
 
@@ -291,6 +406,14 @@
             });
 
             if (move === null) return 'snapback';
+            
+            // Play sound based on move type
+            if (move.flags.includes('c')) {
+                soundManager.play('capture');
+            } else {
+                soundManager.play('move');
+            }
+            
             updateUI();
         }
 
@@ -320,6 +443,10 @@
             game.undo();
             board.position(game.fen());
             updateUI();
+        });
+
+        $('#soundToggle').on('change', function() {
+            soundManager.setEnabled($(this).is(':checked'));
         });
     </script>
 </body>
